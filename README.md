@@ -37,7 +37,7 @@ WatchFlow ist ein ESP32-basiertes Drucker-Monitoring-Gerät für [FilamentFlow](
 - PubSubClient
 
 ### Schritte
-1. `WatchFlow_v2_2.ino` in Arduino IDE öffnen
+1. `WatchFlow_v2_2_1.ino` in Arduino IDE öffnen
 2. Board: **ESP32 Dev Module**
 3. Upload-Speed: 460800
 4. Flashen → fertig
