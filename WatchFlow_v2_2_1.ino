@@ -2,7 +2,7 @@
 //  WatchFlow v2.2 – ESP32 Drucker-Monitor für FilamentFlow
 //  Bambu Lab (MQTT/TLS) + Moonraker/Klipper (HTTP)
 //  MW Service 3D | filament-flow.com
-//  Änderungen v2.2.1: stg_cur (Pro) + vt_tray (Free)
+//  v2.2.1: stg_cur (Pro) + vt_tray (Free) + AMS-Fix
 // ============================================================
 
 #include <WiFi.h>
@@ -22,14 +22,12 @@
 #define AP_SSID              "WatchFlow-Setup"
 #define AP_PASS              "watchflow"
 #define SETUP_PIN            4
-#define AUTO_RESTART_MS      21600000UL   // Auto-Neustart nach 6 Stunden
+#define AUTO_RESTART_MS      21600000UL
 #define MOONRAKER_PORT_DEF   7125
 
-// ── STANDARD WERTE ─────────────────────────────────────────
 #define DEFAULT_API_URL    "https://filament-flow.com/api/printer-status"
 #define DEFAULT_API_KEY    ""
 #define DEFAULT_USER_EMAIL ""
-// ───────────────────────────────────────────────────────────
 
 Preferences prefs;
 WebServer server(80);
@@ -40,15 +38,14 @@ String cfg_api_url    = "";
 String cfg_api_key    = "";
 String cfg_user_email = "";
 
-// ── DRUCKER-TYP ─────────────────────────────────────────────
 enum PrinterType { TYPE_BAMBU, TYPE_MOONRAKER };
 
 struct PrinterConfig {
   String      name;
   String      ip;
-  String      serial;      // Bambu: Seriennummer | Moonraker: leer
-  String      lan_code;    // Bambu: LAN-Code     | Moonraker: leer
-  int         mr_port = MOONRAKER_PORT_DEF;  // Moonraker Port
+  String      serial;
+  String      lan_code;
+  int         mr_port = MOONRAKER_PORT_DEF;
   PrinterType type    = TYPE_BAMBU;
   bool        active  = false;
 };
@@ -129,7 +126,7 @@ PrinterData printerData[MAX_PRINTERS];
 int activeCallbackIndex = 0;
 int currentPrinter      = 0;
 unsigned long lastPrinterSwitch = 0;
-unsigned long currentInterval = PRINTER_INTERVAL; // dynamisch je nach Lizenz
+unsigned long currentInterval = PRINTER_INTERVAL;
 bool configMode = false;
 bool dataReceived[MAX_PRINTERS] = {false, false, false};
 
@@ -162,13 +159,11 @@ void resetPrinterData(int idx) {
   pd.fan_aux           = 0;
   pd.fan_chamber       = 0;
   pd.fan_heatbreak     = 0;
-  // ── NEU ──
   pd.stg_cur = -1;
   pd.vt_tray_type = ""; pd.vt_tray_color = ""; pd.vt_remain = -1;
   pd.vt_tray_sub_brands = ""; pd.vt_tray_info_idx = ""; pd.vt_tray_diameter = 0;
   pd.vt_nozzle_temp_min = 0; pd.vt_nozzle_temp_max = 0; pd.vt_bed_temp = 0;
   pd.vt_drying_temp = 0; pd.vt_drying_time = 0;
-  // ─────────
   pd.trays.clear();
   pd.hms_errors.clear();
 }
@@ -207,9 +202,6 @@ border-radius:8px;margin-top:12px}
 .divider{border:none;border-top:1px solid #333;margin:20px 0}
 .hint{background:#0f3460;border-radius:8px;padding:10px;font-size:12px;color:#aaa;margin-bottom:12px}
 .hint-mr{background:#0f2040;border-radius:8px;padding:10px;font-size:12px;color:#88aaff;margin-bottom:12px}
-.type-bambu{border-color:#00d4ff55}
-.type-moonraker{border-color:#8855ff55}
-.badge-mr{color:#8855ff}
 </style>
 <script>
 function updateType(i){
@@ -232,16 +224,12 @@ String getSetupPage() {
   html += "<p class='sub'>Bambu Lab &amp; Moonraker Monitor</p>";
   html += "<span class='badge'>ESP32 v2.2</span>";
   html += "<form action='/save' method='POST'>";
-
-  // WLAN
   html += "<hr class='divider'>";
   html += "<h2>&#128246; WLAN</h2>";
   html += "<label>WLAN Name (SSID)</label>";
   html += "<input name='ssid' placeholder='Dein WLAN Name' value='" + cfg_wifi_ssid + "' required>";
   html += "<label>WLAN Passwort</label>";
   html += "<input name='wpass' type='password' placeholder='Leer lassen = unveraendert'>";
-
-  // FilamentFlow
   html += "<hr class='divider'>";
   html += "<h2>&#9729; FilamentFlow</h2>";
   html += "<div class='hint'>&#128274; API Key findest du in der FilamentFlow App unter <strong>Einstellungen &rarr; WatchFlow</strong></div>";
@@ -251,29 +239,22 @@ String getSetupPage() {
   html += "<input name='apikey' placeholder='Aus FilamentFlow App kopieren' value='" + cfg_api_key + "' required>";
   html += "<label>E-Mail Adresse</label>";
   html += "<input name='email' type='email' placeholder='Deine FilamentFlow E-Mail' value='" + cfg_user_email + "' required>";
-
-  // Drucker
   html += "<hr class='divider'>";
   html += "<h2>&#128424; Drucker</h2>";
   html += "<p class='info'>Max. " + String(MAX_PRINTERS) + " Drucker &ndash; leer lassen = deaktiviert</p>";
-
   for (int i = 0; i < MAX_PRINTERS; i++) {
     String typeVal = (printerConfigs[i].type == TYPE_MOONRAKER) ? "moonraker" : "bambu";
     html += "<div class='printer-block'>";
     html += "<div class='printer-title'>Drucker " + String(i + 1) + "</div>";
-
     html += "<label>Name</label>";
     html += "<input name='p" + String(i) + "_name' placeholder='z.B. H2C oder Klipper-1' value='" + printerConfigs[i].name + "'>";
     html += "<label>IP Adresse</label>";
     html += "<input name='p" + String(i) + "_ip' placeholder='192.168.178.XXX' value='" + printerConfigs[i].ip + "'>";
-
     html += "<label>Typ</label>";
     html += "<select name='p" + String(i) + "_type' id='p" + String(i) + "_type' onchange='updateType(" + String(i) + ")'>";
     html += "<option value='bambu'" + String(typeVal == "bambu" ? " selected" : "") + ">&#127981; Bambu Lab (LAN)</option>";
     html += "<option value='moonraker'" + String(typeVal == "moonraker" ? " selected" : "") + ">&#128313; Moonraker / Klipper</option>";
     html += "</select>";
-
-    // Bambu-Felder
     html += "<div id='p" + String(i) + "_bambu'>";
     html += "<div class='hint' style='margin-top:10px'>&#9888; Developer Mode: Einstellungen &rarr; LAN Only Mode &rarr; Developer Mode</div>";
     html += "<label>Seriennummer</label>";
@@ -281,17 +262,13 @@ String getSetupPage() {
     html += "<label>LAN Code (leer = unveraendert)</label>";
     html += "<input name='p" + String(i) + "_code' type='password' placeholder='LAN Code vom Display'>";
     html += "</div>";
-
-    // Moonraker-Felder
     html += "<div id='p" + String(i) + "_moonraker' style='display:none'>";
-    html += "<div class='hint-mr' style='margin-top:10px'>&#128313; Moonraker API auf Port 7125 (Standard). Kein Auth noetig im lokalen Netz.</div>";
+    html += "<div class='hint-mr' style='margin-top:10px'>&#128313; Moonraker API auf Port 7125 (Standard).</div>";
     html += "<label>Moonraker Port (Standard: 7125)</label>";
     html += "<input name='p" + String(i) + "_mrport' placeholder='7125' value='" + String(printerConfigs[i].mr_port) + "'>";
     html += "</div>";
-
     html += "</div>";
   }
-
   html += "<button type='submit'>&#128190; Speichern &amp; Starten</button>";
   html += "</form>";
   html += "<hr class='divider'>";
@@ -306,9 +283,7 @@ String getSetupPage() {
 String getSavedPage() {
   String html = HTML_HEADER;
   html += "<div class='card'><h1>&#9200; WatchFlow</h1>";
-  html += "<div class='success'>&#10003; Konfiguration gespeichert!<br><br>";
-  html += "ESP32 startet in 3 Sekunden neu...<br><br>";
-  html += "Verbinde dich wieder mit deinem WLAN.</div></div>";
+  html += "<div class='success'>&#10003; Konfiguration gespeichert!<br><br>ESP32 startet in 3 Sekunden neu...<br><br>Verbinde dich wieder mit deinem WLAN.</div></div>";
   html += HTML_FOOTER;
   return html;
 }
@@ -316,10 +291,7 @@ String getSavedPage() {
 String getResetPage() {
   String html = HTML_HEADER;
   html += "<div class='card'><h1>&#9200; WatchFlow</h1>";
-  html += "<div class='warning'>&#9888; Werkseinstellungen wiederhergestellt!<br><br>";
-  html += "ESP32 startet in 3 Sekunden neu...<br><br>";
-  html += "Verbinde mit <strong>WatchFlow-Setup</strong><br>";
-  html += "und oeffne http://192.168.4.1</div></div>";
+  html += "<div class='warning'>&#9888; Werkseinstellungen wiederhergestellt!<br><br>ESP32 startet in 3 Sekunden neu...<br><br>Verbinde mit <strong>WatchFlow-Setup</strong><br>und oeffne http://192.168.4.1</div></div>";
   html += HTML_FOOTER;
   return html;
 }
@@ -402,22 +374,17 @@ void handleSave() {
   cfg_api_url    = server.arg("apiurl");
   cfg_api_key    = server.arg("apikey");
   cfg_user_email = server.arg("email");
-
   numPrinters = 0;
   for (int i = 0; i < MAX_PRINTERS; i++) {
     printerConfigs[i].name   = server.arg("p" + String(i) + "_name");
     printerConfigs[i].ip     = server.arg("p" + String(i) + "_ip");
     printerConfigs[i].serial = server.arg("p" + String(i) + "_serial");
-
     String typeStr = server.arg("p" + String(i) + "_type");
     printerConfigs[i].type = (typeStr == "moonraker") ? TYPE_MOONRAKER : TYPE_BAMBU;
-
     String portStr = server.arg("p" + String(i) + "_mrport");
     printerConfigs[i].mr_port = (portStr.length() > 0) ? portStr.toInt() : MOONRAKER_PORT_DEF;
-
     String code = server.arg("p" + String(i) + "_code");
     if (code.length() > 0) printerConfigs[i].lan_code = code;
-
     if (printerConfigs[i].type == TYPE_BAMBU) {
       printerConfigs[i].active = printerConfigs[i].name.length()     > 0 &&
                                   printerConfigs[i].ip.length()       > 0 &&
@@ -429,7 +396,6 @@ void handleSave() {
     }
     if (printerConfigs[i].active) numPrinters = i + 1;
   }
-
   saveConfig();
   server.send(200, "text/html", getSavedPage());
   delay(3000);
@@ -468,21 +434,21 @@ void mqttCallbackGeneric(char* topic, byte* payload, unsigned int length) {
     return;
   }
 
-  // ── Filter: 1536 Bytes (erweitert für stg_cur + vt_tray) ──
+  // Filter: 1536 Bytes (erweitert für stg_cur + vt_tray)
   StaticJsonDocument<1536> filter;
-  filter["print"]["gcode_state"]       = true;
-  filter["print"]["mc_percent"]        = true;
-  filter["print"]["mc_remaining_time"] = true;
-  filter["print"]["bed_temper"]        = true;
-  filter["print"]["bed_target_temper"] = true;
-  filter["print"]["subtask_name"]      = true;
-  filter["print"]["gcode_file"]        = true;
-  filter["print"]["gcode_start_time"]  = true;
-  filter["print"]["fail_reason"]       = true;
-  filter["print"]["spd_lvl"]           = true;
-  filter["print"]["big_fan1_speed"]    = true;
-  filter["print"]["big_fan2_speed"]    = true;
-  filter["print"]["cooling_fan_speed"] = true;
+  filter["print"]["gcode_state"]         = true;
+  filter["print"]["mc_percent"]          = true;
+  filter["print"]["mc_remaining_time"]   = true;
+  filter["print"]["bed_temper"]          = true;
+  filter["print"]["bed_target_temper"]   = true;
+  filter["print"]["subtask_name"]        = true;
+  filter["print"]["gcode_file"]          = true;
+  filter["print"]["gcode_start_time"]    = true;
+  filter["print"]["fail_reason"]         = true;
+  filter["print"]["spd_lvl"]             = true;
+  filter["print"]["big_fan1_speed"]      = true;
+  filter["print"]["big_fan2_speed"]      = true;
+  filter["print"]["cooling_fan_speed"]   = true;
   filter["print"]["heatbreak_fan_speed"] = true;
   filter["print"]["3D"]["layer_num"]       = true;
   filter["print"]["3D"]["total_layer_num"] = true;
@@ -495,20 +461,20 @@ void mqttCallbackGeneric(char* topic, byte* payload, unsigned int length) {
   filter["print"]["ams"]["ams"][0]["humidity"]     = true;
   filter["print"]["ams"]["ams"][0]["humidity_raw"] = true;
   filter["print"]["ams"]["ams"][0]["temp"]         = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["id"]             = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["state"]          = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["tray_type"]      = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["tray_color"]     = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["remain"]         = true;
+  filter["print"]["ams"]["ams"][0]["tray"][0]["id"]              = true;
+  filter["print"]["ams"]["ams"][0]["tray"][0]["state"]           = true;
+  filter["print"]["ams"]["ams"][0]["tray"][0]["tray_type"]       = true;
+  filter["print"]["ams"]["ams"][0]["tray"][0]["tray_color"]      = true;
+  filter["print"]["ams"]["ams"][0]["tray"][0]["remain"]          = true;
   filter["print"]["ams"]["ams"][0]["tray"][0]["tray_sub_brands"] = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["tray_info_idx"]  = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["tray_diameter"]  = true;
+  filter["print"]["ams"]["ams"][0]["tray"][0]["tray_info_idx"]   = true;
+  filter["print"]["ams"]["ams"][0]["tray"][0]["tray_diameter"]   = true;
   filter["print"]["ams"]["ams"][0]["tray"][0]["nozzle_temp_min"] = true;
   filter["print"]["ams"]["ams"][0]["tray"][0]["nozzle_temp_max"] = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["bed_temp"]       = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["drying_temp"]    = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["drying_time"]    = true;
-  // ── NEU: stg_cur + vt_tray ──
+  filter["print"]["ams"]["ams"][0]["tray"][0]["bed_temp"]        = true;
+  filter["print"]["ams"]["ams"][0]["tray"][0]["drying_temp"]     = true;
+  filter["print"]["ams"]["ams"][0]["tray"][0]["drying_time"]     = true;
+  // NEU: stg_cur + vt_tray
   filter["print"]["stg_cur"] = true;
   filter["print"]["vt_tray"]["tray_type"]       = true;
   filter["print"]["vt_tray"]["tray_color"]      = true;
@@ -521,12 +487,12 @@ void mqttCallbackGeneric(char* topic, byte* payload, unsigned int length) {
   filter["print"]["vt_tray"]["bed_temp"]        = true;
   filter["print"]["vt_tray"]["drying_temp"]     = true;
   filter["print"]["vt_tray"]["drying_time"]     = true;
-  // ────────────────────────────
   filter["print"]["hms"][0]["attr"]     = true;
   filter["print"]["hms"][0]["code"]     = true;
   filter["print"]["hms"][0]["severity"] = true;
 
-  DynamicJsonDocument doc(16384);
+  // 32768 statt 16384 – Payload kann bis 25KB sein
+  DynamicJsonDocument doc(32768);
   DeserializationError err = deserializeJson(doc, payload, length,
                               DeserializationOption::Filter(filter));
   if (err) {
@@ -548,12 +514,11 @@ void mqttCallbackGeneric(char* topic, byte* payload, unsigned int length) {
   if (print.containsKey("spd_lvl"))           pd.spd_lvl           = print["spd_lvl"];
   if (print.containsKey("bed_temper"))        pd.bed_temper        = print["bed_temper"];
   if (print.containsKey("bed_target_temper")) pd.bed_target_temper = print["bed_target_temper"];
-  // ── NEU: stg_cur ──
+  // NEU: stg_cur
   if (print.containsKey("stg_cur")) {
     pd.stg_cur = print["stg_cur"];
     Serial.println("stg_cur=" + String(pd.stg_cur));
   }
-  // ──────────────────
 
   if (doc["print"]["3D"].containsKey("layer_num"))
     pd.layer_num = doc["print"]["3D"]["layer_num"];
@@ -571,10 +536,10 @@ void mqttCallbackGeneric(char* topic, byte* payload, unsigned int length) {
   if (doc["print"]["device"]["extruder"]["info"][1].containsKey("target"))
     pd.nozzle_target_2 = doc["print"]["device"]["extruder"]["info"][1]["target"];
 
-  if (print.containsKey("cooling_fan_speed"))   pd.fan_cooling  = fanToPercent(print["cooling_fan_speed"].as<const char*>());
-  if (print.containsKey("big_fan1_speed"))      pd.fan_aux      = fanToPercent(print["big_fan1_speed"].as<const char*>());
-  if (print.containsKey("big_fan2_speed"))      pd.fan_chamber  = fanToPercent(print["big_fan2_speed"].as<const char*>());
-  if (print.containsKey("heatbreak_fan_speed")) pd.fan_heatbreak= fanToPercent(print["heatbreak_fan_speed"].as<const char*>());
+  if (print.containsKey("cooling_fan_speed"))   pd.fan_cooling   = fanToPercent(print["cooling_fan_speed"].as<const char*>());
+  if (print.containsKey("big_fan1_speed"))      pd.fan_aux       = fanToPercent(print["big_fan1_speed"].as<const char*>());
+  if (print.containsKey("big_fan2_speed"))      pd.fan_chamber   = fanToPercent(print["big_fan2_speed"].as<const char*>());
+  if (print.containsKey("heatbreak_fan_speed")) pd.fan_heatbreak = fanToPercent(print["heatbreak_fan_speed"].as<const char*>());
 
   pd.trays.clear();
   if (doc["print"].containsKey("ams")) {
@@ -588,13 +553,16 @@ void mqttCallbackGeneric(char* topic, byte* payload, unsigned int length) {
       float amsTemp = ams["temp"].as<String>().toFloat();
       JsonArray trays = ams["tray"].as<JsonArray>();
       for (JsonObject tray : trays) {
-        if (tray["state"] != 11) continue;
+        // Leere Slots überspringen (kein tray_type = leer)
+        int trayState = tray["state"] | 0;
+        String trayType = tray["tray_type"].as<String>();
+        if (trayType.length() == 0 || trayType == "null") continue;
         AmsTray t;
         t.ams_id          = amsId;
         t.tray_id         = tray["id"].as<String>().toInt();
         t.tray_type       = tray["tray_type"].as<String>();
         t.tray_color      = tray["tray_color"].as<String>();
-        t.remain          = tray["remain"];
+        t.remain          = tray["remain"] | 0;
         t.tray_sub_brands = tray["tray_sub_brands"].as<String>();
         t.tray_info_idx   = tray["tray_info_idx"].as<String>();
         t.tray_diameter   = tray["tray_diameter"].as<String>().toFloat();
@@ -609,8 +577,8 @@ void mqttCallbackGeneric(char* topic, byte* payload, unsigned int length) {
       }
     }
   }
-
-  // ── NEU: vt_tray (externe Spule ohne AMS) ──
+  
+  // NEU: vt_tray (externe Spule ohne AMS)
   if (doc["print"].containsKey("vt_tray")) {
     JsonObject vt = doc["print"]["vt_tray"];
     pd.vt_tray_type       = vt["tray_type"].as<String>();
@@ -628,7 +596,6 @@ void mqttCallbackGeneric(char* topic, byte* payload, unsigned int length) {
   } else {
     pd.vt_remain = -1;
   }
-  // ────────────────────────────────────────────
 
   pd.hms_errors.clear();
   if (doc["print"].containsKey("hms")) {
@@ -752,11 +719,9 @@ void pollMoonraker(int idx) {
     else if (state == "error")    pd.gcode_state = "FAILED";
     else if (state == "complete") pd.gcode_state = "FINISH";
     else                          pd.gcode_state = "IDLE";
-
     pd.gcode_file      = ps["filename"] | "";
     pd.layer_num       = ps["current_layer"] | 0;
     pd.total_layer_num = ps["total_layer"]   | 0;
-
     float printDuration = ps["print_duration"] | 0.0f;
     float totalDuration = ps["total_duration"] | 0.0f;
     if (totalDuration > 0 && printDuration > 0) {
@@ -767,28 +732,23 @@ void pollMoonraker(int idx) {
       }
     }
   }
-
   if (result.containsKey("display_status")) {
     float prog = result["display_status"]["progress"] | 0.0f;
     pd.mc_percent = (int)(prog * 100.0f);
   }
-
   if (result.containsKey("extruder")) {
     pd.nozzle_temper_1 = result["extruder"]["temperature"] | 0.0f;
     pd.nozzle_target_1 = result["extruder"]["target"]      | 0.0f;
   }
-
   if (result.containsKey("heater_bed")) {
     pd.bed_temper        = result["heater_bed"]["temperature"] | 0.0f;
     pd.bed_target_temper = result["heater_bed"]["target"]      | 0.0f;
   }
-
   if (result.containsKey("fan")) {
     float fanSpeed = result["fan"]["speed"] | 0.0f;
     pd.fan_cooling = (int)(fanSpeed * 100.0f);
   }
 
-  // Moonraker hat kein AMS und kein vt_tray → zurücksetzen
   pd.trays.clear();
   pd.hms_errors.clear();
   pd.stg_cur   = -1;
@@ -803,7 +763,7 @@ void pollMoonraker(int idx) {
   );
 }
 
-// ── DISPATCHER: Bambu oder Moonraker ───────────────────────
+// ── DISPATCHER ─────────────────────────────────────────────
 
 void connectAndWait(int idx) {
   if (!printerConfigs[idx].active) return;
@@ -845,9 +805,8 @@ void sendToAPI(int i) {
   doc["bed_target"]      = pd.bed_target_temper;
   doc["printer_type"]    = (printerConfigs[i].type == TYPE_MOONRAKER) ? "moonraker" : "bambu";
 
-  // ── NEU: stage + vt_tray ──
+  // NEU: stage + vt_tray
   doc["stage"] = pd.stg_cur;
-
   JsonObject vtTray = doc.createNestedObject("vt_tray");
   vtTray["tray_type"]       = pd.vt_tray_type;
   vtTray["tray_color"]      = "#" + (pd.vt_tray_color.length() >= 6
@@ -862,7 +821,6 @@ void sendToAPI(int i) {
   vtTray["bed_temp"]        = pd.vt_bed_temp;
   vtTray["drying_temp"]     = pd.vt_drying_temp;
   vtTray["drying_time"]     = pd.vt_drying_time;
-  // ─────────────────────────
 
   JsonObject fans = doc.createNestedObject("fans");
   fans["cooling"]   = pd.fan_cooling;
@@ -1018,7 +976,6 @@ void loop() {
     return;
   }
 
-  // Auto-Neustart nach 6 Stunden (Heap-Schutz)
   if (millis() > AUTO_RESTART_MS) {
     Serial.println("Planmaessiger Neustart nach 6h...");
     delay(500);
